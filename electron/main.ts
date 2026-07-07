@@ -141,6 +141,10 @@ function registerIpc(): void {
     }
 
     const playlists = await readPlaylists();
+    if (playlists.some((playlist) => playlist.name === playlistName)) {
+      return playlists;
+    }
+
     const nextPlaylists = [
       ...playlists,
       { id: randomUUID(), name: playlistName, trackIds: [], createdAt: new Date().toISOString() }

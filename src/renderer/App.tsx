@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -40,6 +41,7 @@ function App() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [query, setQuery] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState("");
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
@@ -48,6 +50,7 @@ function App() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(70);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [playlistMessage, setPlaylistMessage] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("library");
   const [queueTrackIds, setQueueTrackIds] = useState<string[]>([]);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("loop");
@@ -76,6 +79,8 @@ function App() {
   const currentIndex = currentTrack
     ? playbackTracks.findIndex((track) => track.id === currentTrack.id)
     : -1;
+  const progressPercent =
+    duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
   const pageTitle = activeView === "library" ? "ZZmusic" : selectedPlaylist?.name ?? "歌单";
   const pageEyebrow = activeView === "library" ? "Windows 本地音乐播放器" : "本地音乐歌单";
   const sectionTitle = activeView === "library" ? "歌曲" : selectedPlaylist?.name ?? "歌单";
@@ -158,14 +163,29 @@ function App() {
   async function handleCreatePlaylist() {
     const playlistName = newPlaylistName.trim();
     if (!playlistName) {
+      setPlaylistMessage("请输入歌单名称。");
       return;
     }
 
-    const nextPlaylists = await window.zzmusic.createPlaylist(playlistName);
-    setPlaylists(nextPlaylists);
-    setSelectedPlaylistId(nextPlaylists.at(-1)?.id ?? null);
-    setActiveView("playlist");
-    setNewPlaylistName("");
+    if (playlists.some((playlist) => playlist.name === playlistName)) {
+      setPlaylistMessage(`“${playlistName}”已经存在。`);
+      return;
+    }
+
+    setIsCreatingPlaylist(true);
+    setPlaylistMessage(null);
+    try {
+      const nextPlaylists = await window.zzmusic.createPlaylist(playlistName);
+      setPlaylists(nextPlaylists);
+      setSelectedPlaylistId(nextPlaylists.at(-1)?.id ?? null);
+      setActiveView("playlist");
+      setNewPlaylistName("");
+      setPlaylistMessage(`已创建歌单“${playlistName}”。`);
+    } catch {
+      setPlaylistMessage("创建失败，请稍后重试。");
+    } finally {
+      setIsCreatingPlaylist(false);
+    }
   }
 
   async function handleAddTrackToPlaylist(trackId: string, playlistId: string) {
@@ -173,7 +193,20 @@ function App() {
       return;
     }
 
-    setPlaylists(await window.zzmusic.addTrackToPlaylist(playlistId, trackId));
+    const currentPlaylist = playlists.find((playlist) => playlist.id === playlistId);
+    if (currentPlaylist?.trackIds.includes(trackId)) {
+      setPlaylistMessage(`这首歌已在“${currentPlaylist.name}”中。`);
+      return;
+    }
+
+    try {
+      const nextPlaylists = await window.zzmusic.addTrackToPlaylist(playlistId, trackId);
+      const targetPlaylist = nextPlaylists.find((playlist) => playlist.id === playlistId);
+      setPlaylists(nextPlaylists);
+      setPlaylistMessage(targetPlaylist ? `已添加到“${targetPlaylist.name}”。` : "已添加到歌单。");
+    } catch {
+      setPlaylistMessage("添加失败，请稍后重试。");
+    }
   }
 
   async function handleRemoveFromSelectedPlaylist(trackId: string) {
@@ -366,11 +399,12 @@ function App() {
                   placeholder="新建歌单名称"
                   onChange={(event) => setNewPlaylistName(event.target.value)}
                 />
-                <button type="submit">
+                <button type="submit" disabled={isCreatingPlaylist}>
                   <Plus size={16} />
-                  <span>创建</span>
+                  <span>{isCreatingPlaylist ? "创建中" : "创建"}</span>
                 </button>
               </form>
+              {playlistMessage && <div className="playlist-message">{playlistMessage}</div>}
 
               {playlists.length > 0 ? (
                 <div className="playlist-tabs" aria-label="歌单列表">
@@ -421,6 +455,7 @@ function App() {
                   className={`track-row ${activeView === "library" ? "with-playlist" : ""} ${
                     track.id === currentTrackId ? "active" : ""
                   }`}
+                  style={{ "--row-index": index } as CSSProperties}
                   key={track.id}
                 >
                   <span className="track-index">{index + 1}</span>
@@ -508,7 +543,7 @@ function App() {
         </div>
       )}
 
-      <footer className="player-bar">
+      <footer className={`player-bar ${isPlaying ? "is-playing" : ""}`}>
         <div className="now-playing">
           <div className="cover-art">Z</div>
           <div>
@@ -573,6 +608,7 @@ function App() {
               max={duration || 0}
               step="0.1"
               value={Math.min(currentTime, duration || 0)}
+              style={{ "--range-fill": `${progressPercent}%` } as CSSProperties}
               aria-label="播放进度"
               disabled={!currentTrack || duration === 0}
               onChange={(event) => handleSeek(event.target.value)}
@@ -588,6 +624,7 @@ function App() {
             min="0"
             max="100"
             value={volume}
+            style={{ "--range-fill": `${volume}%` } as CSSProperties}
             aria-label="音量"
             onChange={(event) => setVolume(Number(event.target.value))}
           />
