@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertCircle,
   ChevronLeft,
   ChevronRight,
   Library,
@@ -11,7 +12,8 @@ import {
   SkipBack,
   SkipForward,
   Trash2,
-  Volume2
+  Volume2,
+  X
 } from "lucide-react";
 
 function formatTime(seconds: number): string {
@@ -36,6 +38,7 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(70);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   const filteredTracks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -92,7 +95,10 @@ function App() {
     }
 
     if (isPlaying) {
-      audio.play().catch(() => setIsPlaying(false));
+      audio.play().catch(() => {
+        setIsPlaying(false);
+        setPlaybackError("播放失败：文件可能已移动、被删除，或当前格式暂不支持。");
+      });
     } else {
       audio.pause();
     }
@@ -112,6 +118,7 @@ function App() {
   }
 
   function playTrack(trackId: string) {
+    setPlaybackError(null);
     setCurrentTrackId(trackId);
     setIsPlaying(true);
   }
@@ -151,6 +158,11 @@ function App() {
 
     setIsPlaying(false);
     setCurrentTime(0);
+  }
+
+  function handlePlaybackError() {
+    setIsPlaying(false);
+    setPlaybackError("播放失败：文件可能已移动、被删除，或当前格式暂不支持。");
   }
 
   function handleSeek(value: string) {
@@ -285,6 +297,16 @@ function App() {
         </section>
       </section>
 
+      {playbackError && (
+        <div className="playback-alert" role="alert">
+          <AlertCircle size={18} />
+          <span>{playbackError}</span>
+          <button type="button" aria-label="关闭播放失败提示" onClick={() => setPlaybackError(null)}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       <footer className="player-bar">
         <div className="now-playing">
           <div className="cover-art">Z</div>
@@ -345,9 +367,13 @@ function App() {
       </footer>
       <audio
         ref={audioRef}
-        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+        onLoadedMetadata={(event) => {
+          setDuration(event.currentTarget.duration || 0);
+          setPlaybackError(null);
+        }}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         onEnded={handleEnded}
+        onError={handlePlaybackError}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
       />

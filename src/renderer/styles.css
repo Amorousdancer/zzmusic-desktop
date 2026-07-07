@@ -336,6 +336,43 @@ button:disabled {
   background: #1d1d1f;
 }
 
+.playback-alert {
+  position: fixed;
+  right: 28px;
+  bottom: 122px;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid #f1c6cc;
+  border-radius: 8px;
+  color: #8a1f2d;
+  background: #fff7f8;
+  box-shadow: 0 16px 40px rgba(29, 29, 31, 0.12);
+}
+
+.playback-alert span {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.playback-alert button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: inherit;
+  background: transparent;
+}
+
+.playback-alert button:hover {
+  background: #f8e4e8;
+}
+
 .player-bar {
   grid-column: 2;
   display: grid;
