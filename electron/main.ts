@@ -153,6 +153,27 @@ function registerIpc(): void {
     return nextPlaylists;
   });
 
+  ipcMain.handle("playlists:rename", async (_event, playlistId: string, name: string) => {
+    const playlistName = name.trim();
+    const playlists = await readPlaylists();
+    if (!playlistName || playlists.some((playlist) => playlist.id !== playlistId && playlist.name === playlistName)) {
+      return playlists;
+    }
+
+    const nextPlaylists = playlists.map((playlist) =>
+      playlist.id === playlistId ? { ...playlist, name: playlistName } : playlist
+    );
+    await writePlaylists(nextPlaylists);
+    return nextPlaylists;
+  });
+
+  ipcMain.handle("playlists:delete", async (_event, playlistId: string) => {
+    const playlists = await readPlaylists();
+    const nextPlaylists = playlists.filter((playlist) => playlist.id !== playlistId);
+    await writePlaylists(nextPlaylists);
+    return nextPlaylists;
+  });
+
   ipcMain.handle("playlists:add-track", async (_event, playlistId: string, trackId: string) => {
     const playlists = await readPlaylists();
     const nextPlaylists = playlists.map((playlist) => {

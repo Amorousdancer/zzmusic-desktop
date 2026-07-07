@@ -43,6 +43,7 @@ function App() {
   const [isImporting, setIsImporting] = useState(false);
   const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState("");
+  const [renamePlaylistName, setRenamePlaylistName] = useState("");
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -100,6 +101,10 @@ function App() {
       setSelectedPlaylistId(playlists[0]?.id ?? null);
     }
   }, [playlists, selectedPlaylistId]);
+
+  useEffect(() => {
+    setRenamePlaylistName(selectedPlaylist?.name ?? "");
+  }, [selectedPlaylist?.id, selectedPlaylist?.name]);
 
   useEffect(() => {
     if (currentTrackId && !tracks.some((track) => track.id === currentTrackId)) {
@@ -206,6 +211,60 @@ function App() {
       setPlaylistMessage(targetPlaylist ? `已添加到“${targetPlaylist.name}”。` : "已添加到歌单。");
     } catch {
       setPlaylistMessage("添加失败，请稍后重试。");
+    }
+  }
+
+  async function handleRenameSelectedPlaylist() {
+    if (!selectedPlaylist) {
+      return;
+    }
+
+    const playlistName = renamePlaylistName.trim();
+    if (!playlistName) {
+      setPlaylistMessage("请输入新的歌单名称。");
+      return;
+    }
+
+    if (playlistName === selectedPlaylist.name) {
+      setPlaylistMessage("歌单名称没有变化。");
+      return;
+    }
+
+    if (playlists.some((playlist) => playlist.id !== selectedPlaylist.id && playlist.name === playlistName)) {
+      setPlaylistMessage(`“${playlistName}”已经存在。`);
+      return;
+    }
+
+    try {
+      const nextPlaylists = await window.zzmusic.renamePlaylist(selectedPlaylist.id, playlistName);
+      setPlaylists(nextPlaylists);
+      setSelectedPlaylistId(selectedPlaylist.id);
+      setPlaylistMessage(`已重命名为“${playlistName}”。`);
+    } catch {
+      setPlaylistMessage("重命名失败，请稍后重试。");
+    }
+  }
+
+  async function handleDeleteSelectedPlaylist() {
+    if (!selectedPlaylist) {
+      return;
+    }
+
+    const shouldDelete = window.confirm(`删除歌单“${selectedPlaylist.name}”？歌曲仍会保留在资料库。`);
+    if (!shouldDelete) {
+      return;
+    }
+
+    try {
+      const nextPlaylists = await window.zzmusic.deletePlaylist(selectedPlaylist.id);
+      setPlaylists(nextPlaylists);
+      setSelectedPlaylistId(nextPlaylists[0]?.id ?? null);
+      setQueueTrackIds((ids) =>
+        ids.some((trackId) => selectedPlaylist.trackIds.includes(trackId)) ? [] : ids
+      );
+      setPlaylistMessage(`已删除歌单“${selectedPlaylist.name}”。`);
+    } catch {
+      setPlaylistMessage("删除失败，请稍后重试。");
     }
   }
 
@@ -433,9 +492,22 @@ function App() {
               {selectedPlaylist && (
                 <div className="playlist-summary">
                   <div className="playlist-cover">Z</div>
-                  <div>
+                  <div className="playlist-summary-content">
                     <strong>{selectedPlaylist.name}</strong>
                     <span>从资料库选择歌曲右侧的歌单，即可添加到这里。</span>
+                  </div>
+                  <div className="playlist-actions">
+                    <input
+                      value={renamePlaylistName}
+                      aria-label="歌单新名称"
+                      onChange={(event) => setRenamePlaylistName(event.target.value)}
+                    />
+                    <button type="button" onClick={handleRenameSelectedPlaylist}>
+                      保存
+                    </button>
+                    <button className="danger" type="button" onClick={handleDeleteSelectedPlaylist}>
+                      删除
+                    </button>
                   </div>
                 </div>
               )}
@@ -472,20 +544,39 @@ function App() {
                     {track.id === currentTrackId ? formatTime(duration) : "--:--"}
                   </span>
                   {activeView === "library" && (
-                    <select
-                      className="playlist-select"
-                      value=""
-                      aria-label={`添加 ${track.title} 到歌单`}
-                      disabled={playlists.length === 0}
-                      onChange={(event) => handleAddTrackToPlaylist(track.id, event.target.value)}
-                    >
-                      <option value="">添加到歌单</option>
-                      {playlists.map((playlist) => (
-                        <option value={playlist.id} key={playlist.id}>
-                          {playlist.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="playlist-menu">
+                      {playlists.length > 0 ? (
+                        <details>
+                          <summary title="添加到歌单" aria-label={`添加 ${track.title} 到歌单`}>
+                            <Plus size={16} />
+                          </summary>
+                          <div className="playlist-menu-list">
+                            {playlists.map((playlist) => (
+                              <button
+                                type="button"
+                                key={playlist.id}
+                                onClick={(event) => {
+                                  handleAddTrackToPlaylist(track.id, playlist.id);
+                                  event.currentTarget.closest("details")?.removeAttribute("open");
+                                }}
+                              >
+                                {playlist.name}
+                              </button>
+                            ))}
+                          </div>
+                        </details>
+                      ) : (
+                        <button
+                          className="playlist-menu-empty"
+                          type="button"
+                          title="先创建歌单"
+                          aria-label="先创建歌单"
+                          disabled
+                        >
+                          <Plus size={16} />
+                        </button>
+                      )}
+                    </div>
                   )}
                   <button
                     className="track-remove"

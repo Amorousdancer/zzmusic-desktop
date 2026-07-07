@@ -24,6 +24,8 @@ interface Window {
     removeTrack: (trackId: string) => Promise<Track[]>;
     getPlaylists: () => Promise<Playlist[]>;
     createPlaylist: (name: string) => Promise<Playlist[]>;
+    renamePlaylist: (playlistId: string, name: string) => Promise<Playlist[]>;
+    deletePlaylist: (playlistId: string) => Promise<Playlist[]>;
     addTrackToPlaylist: (playlistId: string, trackId: string) => Promise<Playlist[]>;
     removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<Playlist[]>;
   };
