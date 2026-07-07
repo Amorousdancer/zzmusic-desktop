@@ -5,6 +5,7 @@ type Track = {
   title: string;
   artist: string;
   filePath: string;
+  audioUrl: string;
   importedAt: string;
 };
 

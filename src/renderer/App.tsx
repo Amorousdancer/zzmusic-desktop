@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -14,10 +14,28 @@ import {
   Volume2
 } from "lucide-react";
 
+function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0:00";
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${minutes}:${rest}`;
+}
+
 function App() {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [query, setQuery] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(70);
 
   const filteredTracks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -29,10 +47,56 @@ function App() {
       `${track.title} ${track.artist}`.toLowerCase().includes(keyword)
     );
   }, [query, tracks]);
+  const currentTrack = tracks.find((track) => track.id === currentTrackId) ?? null;
+  const currentIndex = currentTrack
+    ? tracks.findIndex((track) => track.id === currentTrack.id)
+    : -1;
 
   useEffect(() => {
     window.zzmusic.getLibrary().then(setTracks).catch(console.error);
   }, []);
+
+  useEffect(() => {
+    if (currentTrackId && !tracks.some((track) => track.id === currentTrackId)) {
+      setCurrentTrackId(null);
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setDuration(0);
+    }
+  }, [currentTrackId, tracks]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.volume = volume / 100;
+  }, [volume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    if (!currentTrack) {
+      audio.pause();
+      audio.removeAttribute("src");
+      return;
+    }
+
+    if (audio.src !== currentTrack.audioUrl) {
+      audio.src = currentTrack.audioUrl;
+      audio.load();
+    }
+
+    if (isPlaying) {
+      audio.play().catch(() => setIsPlaying(false));
+    } else {
+      audio.pause();
+    }
+  }, [currentTrack, isPlaying]);
 
   async function handleImportTracks() {
     setIsImporting(true);
@@ -45,6 +109,59 @@ function App() {
 
   async function handleRemoveTrack(trackId: string) {
     setTracks(await window.zzmusic.removeTrack(trackId));
+  }
+
+  function playTrack(trackId: string) {
+    setCurrentTrackId(trackId);
+    setIsPlaying(true);
+  }
+
+  function togglePlay() {
+    if (!currentTrack && tracks[0]) {
+      playTrack(tracks[0].id);
+      return;
+    }
+
+    setIsPlaying((playing) => !playing);
+  }
+
+  function playPrevious() {
+    if (tracks.length === 0) {
+      return;
+    }
+
+    const previousIndex = currentIndex > 0 ? currentIndex - 1 : tracks.length - 1;
+    playTrack(tracks[previousIndex].id);
+  }
+
+  function playNext() {
+    if (tracks.length === 0) {
+      return;
+    }
+
+    const nextIndex = currentIndex >= 0 && currentIndex < tracks.length - 1 ? currentIndex + 1 : 0;
+    playTrack(tracks[nextIndex].id);
+  }
+
+  function handleEnded() {
+    if (tracks.length > 1) {
+      playNext();
+      return;
+    }
+
+    setIsPlaying(false);
+    setCurrentTime(0);
+  }
+
+  function handleSeek(value: string) {
+    const seconds = Number(value);
+    const audio = audioRef.current;
+    if (!audio || !Number.isFinite(seconds)) {
+      return;
+    }
+
+    audio.currentTime = seconds;
+    setCurrentTime(seconds);
   }
 
   return (
@@ -121,13 +238,23 @@ function App() {
           {filteredTracks.length > 0 ? (
             <div className="track-list">
               {filteredTracks.map((track, index) => (
-                <div className="track-row" key={track.id}>
+                <div
+                  className={`track-row ${track.id === currentTrackId ? "active" : ""}`}
+                  key={track.id}
+                >
                   <span className="track-index">{index + 1}</span>
-                  <button className="track-title" type="button" title={track.filePath}>
+                  <button
+                    className="track-title"
+                    type="button"
+                    title={track.filePath}
+                    onClick={() => playTrack(track.id)}
+                  >
                     <strong>{track.title}</strong>
                     <small>{track.artist}</small>
                   </button>
-                  <span className="track-time">--:--</span>
+                  <span className="track-time">
+                    {track.id === currentTrackId ? formatTime(duration) : "--:--"}
+                  </span>
                   <button
                     className="track-remove"
                     type="button"
@@ -162,35 +289,68 @@ function App() {
         <div className="now-playing">
           <div className="cover-art">Z</div>
           <div>
-            <strong>未播放</strong>
-            <span>{tracks.length > 0 ? `${tracks.length} 首歌曲已就绪` : "导入音乐后开始播放"}</span>
+            <strong>{currentTrack?.title ?? "未播放"}</strong>
+            <span>
+              {currentTrack?.artist ??
+                (tracks.length > 0 ? `${tracks.length} 首歌曲已就绪` : "导入音乐后开始播放")}
+            </span>
           </div>
         </div>
 
         <div className="transport">
           <div className="transport-buttons">
-            <button type="button" aria-label="上一首">
+            <button type="button" aria-label="上一首" onClick={playPrevious} disabled={tracks.length === 0}>
               <SkipBack size={18} fill="currentColor" />
             </button>
-            <button className="play-button" type="button" aria-label="播放或暂停">
-              <Pause size={20} fill="currentColor" />
+            <button
+              className="play-button"
+              type="button"
+              aria-label={isPlaying ? "暂停" : "播放"}
+              onClick={togglePlay}
+              disabled={tracks.length === 0}
+            >
+              {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
             </button>
-            <button type="button" aria-label="下一首">
+            <button type="button" aria-label="下一首" onClick={playNext} disabled={tracks.length === 0}>
               <SkipForward size={18} fill="currentColor" />
             </button>
           </div>
           <div className="timeline">
-            <span>0:00</span>
-            <input type="range" min="0" max="100" defaultValue="0" aria-label="播放进度" />
-            <span>0:00</span>
+            <span>{formatTime(currentTime)}</span>
+            <input
+              type="range"
+              min="0"
+              max={duration || 0}
+              step="0.1"
+              value={Math.min(currentTime, duration || 0)}
+              aria-label="播放进度"
+              disabled={!currentTrack || duration === 0}
+              onChange={(event) => handleSeek(event.target.value)}
+            />
+            <span>{formatTime(duration)}</span>
           </div>
         </div>
 
         <div className="volume">
           <Volume2 size={18} />
-          <input type="range" min="0" max="100" defaultValue="70" aria-label="音量" />
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={volume}
+            aria-label="音量"
+            onChange={(event) => setVolume(Number(event.target.value))}
+          />
         </div>
       </footer>
+      <audio
+        ref={audioRef}
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onEnded={handleEnded}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+      />
     </main>
   );
 }

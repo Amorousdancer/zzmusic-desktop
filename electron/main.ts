@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } fr
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 let mainWindow: BrowserWindow | null = null;
 const allowedExtensions = new Set([".mp3", ".wav", ".flac", ".m4a"]);
@@ -12,6 +13,10 @@ type Track = {
   artist: string;
   filePath: string;
   importedAt: string;
+};
+
+type TrackView = Track & {
+  audioUrl: string;
 };
 
 function libraryPath(): string {
@@ -43,6 +48,13 @@ async function readLibrary(): Promise<Track[]> {
   }
 }
 
+function toTrackView(track: Track): TrackView {
+  return {
+    ...track,
+    audioUrl: pathToFileURL(track.filePath).toString()
+  };
+}
+
 async function writeLibrary(tracks: Track[]): Promise<void> {
   const path = libraryPath();
   await mkdir(dirname(path), { recursive: true });
@@ -50,7 +62,7 @@ async function writeLibrary(tracks: Track[]): Promise<void> {
 }
 
 function registerIpc(): void {
-  ipcMain.handle("library:get", () => readLibrary());
+  ipcMain.handle("library:get", async () => (await readLibrary()).map(toTrackView));
 
   ipcMain.handle("library:import", async () => {
     const dialogOptions: OpenDialogOptions = {
@@ -63,7 +75,7 @@ function registerIpc(): void {
       : await dialog.showOpenDialog(dialogOptions);
 
     if (result.canceled) {
-      return readLibrary();
+      return (await readLibrary()).map(toTrackView);
     }
 
     const library = await readLibrary();
@@ -75,14 +87,14 @@ function registerIpc(): void {
     const nextLibrary = [...library, ...importedTracks];
 
     await writeLibrary(nextLibrary);
-    return nextLibrary;
+    return nextLibrary.map(toTrackView);
   });
 
   ipcMain.handle("library:remove", async (_event, trackId: string) => {
     const library = await readLibrary();
     const nextLibrary = library.filter((track) => track.id !== trackId);
     await writeLibrary(nextLibrary);
-    return nextLibrary;
+    return nextLibrary.map(toTrackView);
   });
 }
 
