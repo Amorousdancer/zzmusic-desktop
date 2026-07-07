@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -13,13 +14,39 @@ import {
   Volume2
 } from "lucide-react";
 
-const demoTracks = [
-  { title: "等待导入的歌曲", artist: "ZZmusic", time: "--:--" },
-  { title: "本地音乐库", artist: "Windows x64", time: "--:--" },
-  { title: "浅色播放器界面", artist: "Apple Music inspired", time: "--:--" }
-];
-
 function App() {
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [query, setQuery] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+
+  const filteredTracks = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) {
+      return tracks;
+    }
+
+    return tracks.filter((track) =>
+      `${track.title} ${track.artist}`.toLowerCase().includes(keyword)
+    );
+  }, [query, tracks]);
+
+  useEffect(() => {
+    window.zzmusic.getLibrary().then(setTracks).catch(console.error);
+  }, []);
+
+  async function handleImportTracks() {
+    setIsImporting(true);
+    try {
+      setTracks(await window.zzmusic.importTracks());
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  async function handleRemoveTrack(trackId: string) {
+    setTracks(await window.zzmusic.removeTrack(trackId));
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -56,12 +83,21 @@ function App() {
 
           <label className="search">
             <Search size={16} />
-            <input placeholder="搜索本地歌曲" />
+            <input
+              placeholder="搜索本地歌曲"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </label>
 
-          <button className="import-button" type="button">
+          <button
+            className="import-button"
+            type="button"
+            onClick={handleImportTracks}
+            disabled={isImporting}
+          >
             <Plus size={18} />
-            <span>导入音乐</span>
+            <span>{isImporting ? "导入中" : "导入音乐"}</span>
           </button>
         </header>
 
@@ -70,33 +106,55 @@ function App() {
             <p>Windows 本地音乐播放器</p>
             <h1>ZZmusic</h1>
           </div>
-          <button className="primary-action" type="button">
+          <button className="primary-action" type="button" onClick={handleImportTracks}>
             <Play size={18} fill="currentColor" />
-            <span>开始体验</span>
+            <span>{tracks.length > 0 ? "继续导入" : "开始体验"}</span>
           </button>
         </section>
 
         <section className="library-panel">
           <div className="section-heading">
             <h2>歌曲</h2>
-            <span>{demoTracks.length} 首</span>
+            <span>{tracks.length} 首</span>
           </div>
 
-          <div className="track-list">
-            {demoTracks.map((track, index) => (
-              <button className="track-row" type="button" key={track.title}>
-                <span className="track-index">{index + 1}</span>
-                <span className="track-title">
-                  <strong>{track.title}</strong>
-                  <small>{track.artist}</small>
-                </span>
-                <span className="track-time">{track.time}</span>
-                <span className="track-remove" aria-label="从播放列表移除">
-                  <Trash2 size={16} />
-                </span>
-              </button>
-            ))}
-          </div>
+          {filteredTracks.length > 0 ? (
+            <div className="track-list">
+              {filteredTracks.map((track, index) => (
+                <div className="track-row" key={track.id}>
+                  <span className="track-index">{index + 1}</span>
+                  <button className="track-title" type="button" title={track.filePath}>
+                    <strong>{track.title}</strong>
+                    <small>{track.artist}</small>
+                  </button>
+                  <span className="track-time">--:--</span>
+                  <button
+                    className="track-remove"
+                    type="button"
+                    aria-label={`从播放列表移除 ${track.title}`}
+                    onClick={() => handleRemoveTrack(track.id)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <strong>{tracks.length === 0 ? "还没有本地音乐" : "没有匹配的歌曲"}</strong>
+              <span>
+                {tracks.length === 0
+                  ? "导入 mp3、wav、flac 或 m4a 文件后会显示在这里。"
+                  : "换个关键词试试。"}
+              </span>
+              {tracks.length === 0 && (
+                <button type="button" onClick={handleImportTracks}>
+                  <Plus size={16} />
+                  <span>导入音乐</span>
+                </button>
+              )}
+            </div>
+          )}
         </section>
       </section>
 
@@ -105,7 +163,7 @@ function App() {
           <div className="cover-art">Z</div>
           <div>
             <strong>未播放</strong>
-            <span>导入音乐后开始播放</span>
+            <span>{tracks.length > 0 ? `${tracks.length} 首歌曲已就绪` : "导入音乐后开始播放"}</span>
           </div>
         </div>
 
