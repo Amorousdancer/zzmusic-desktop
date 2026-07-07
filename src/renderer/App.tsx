@@ -8,7 +8,10 @@ import {
   Pause,
   Play,
   Plus,
+  Repeat,
+  Repeat1,
   Search,
+  Shuffle,
   SkipBack,
   SkipForward,
   Trash2,
@@ -17,6 +20,7 @@ import {
 } from "lucide-react";
 
 type ActiveView = "library" | "playlist";
+type PlaybackMode = "loop" | "shuffle";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -33,8 +37,11 @@ function formatTime(seconds: number): string {
 function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [query, setQuery] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState("");
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -42,28 +49,52 @@ function App() {
   const [volume, setVolume] = useState(70);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<ActiveView>("library");
+  const [queueTrackIds, setQueueTrackIds] = useState<string[]>([]);
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("loop");
+  const [repeatOne, setRepeatOne] = useState(false);
 
+  const selectedPlaylist = playlists.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
+  const playlistTracks = selectedPlaylist
+    ? tracks.filter((track) => selectedPlaylist.trackIds.includes(track.id))
+    : [];
+  const viewTracks = activeView === "playlist" ? playlistTracks : tracks;
   const filteredTracks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) {
-      return tracks;
+      return viewTracks;
     }
 
-    return tracks.filter((track) =>
+    return viewTracks.filter((track) =>
       `${track.title} ${track.artist}`.toLowerCase().includes(keyword)
     );
-  }, [query, tracks]);
+  }, [query, viewTracks]);
   const currentTrack = tracks.find((track) => track.id === currentTrackId) ?? null;
+  const queueTracks = queueTrackIds
+    .map((trackId) => tracks.find((track) => track.id === trackId))
+    .filter((track): track is Track => Boolean(track));
+  const playbackTracks = queueTracks.length > 0 ? queueTracks : viewTracks.length > 0 ? viewTracks : tracks;
   const currentIndex = currentTrack
-    ? tracks.findIndex((track) => track.id === currentTrack.id)
+    ? playbackTracks.findIndex((track) => track.id === currentTrack.id)
     : -1;
-  const pageTitle = activeView === "library" ? "ZZmusic" : "默认歌单";
+  const pageTitle = activeView === "library" ? "ZZmusic" : selectedPlaylist?.name ?? "歌单";
   const pageEyebrow = activeView === "library" ? "Windows 本地音乐播放器" : "本地音乐歌单";
-  const sectionTitle = activeView === "library" ? "歌曲" : "默认歌单";
+  const sectionTitle = activeView === "library" ? "歌曲" : selectedPlaylist?.name ?? "歌单";
 
   useEffect(() => {
-    window.zzmusic.getLibrary().then(setTracks).catch(console.error);
+    Promise.all([window.zzmusic.getLibrary(), window.zzmusic.getPlaylists()])
+      .then(([libraryTracks, savedPlaylists]) => {
+        setTracks(libraryTracks);
+        setPlaylists(savedPlaylists);
+        setSelectedPlaylistId(savedPlaylists[0]?.id ?? null);
+      })
+      .catch(console.error);
   }, []);
+
+  useEffect(() => {
+    if (selectedPlaylistId && !playlists.some((playlist) => playlist.id === selectedPlaylistId)) {
+      setSelectedPlaylistId(playlists[0]?.id ?? null);
+    }
+  }, [playlists, selectedPlaylistId]);
 
   useEffect(() => {
     if (currentTrackId && !tracks.some((track) => track.id === currentTrackId)) {
@@ -121,17 +152,48 @@ function App() {
 
   async function handleRemoveTrack(trackId: string) {
     setTracks(await window.zzmusic.removeTrack(trackId));
+    setPlaylists(await window.zzmusic.getPlaylists());
   }
 
-  function playTrack(trackId: string) {
+  async function handleCreatePlaylist() {
+    const playlistName = newPlaylistName.trim();
+    if (!playlistName) {
+      return;
+    }
+
+    const nextPlaylists = await window.zzmusic.createPlaylist(playlistName);
+    setPlaylists(nextPlaylists);
+    setSelectedPlaylistId(nextPlaylists.at(-1)?.id ?? null);
+    setActiveView("playlist");
+    setNewPlaylistName("");
+  }
+
+  async function handleAddTrackToPlaylist(trackId: string, playlistId: string) {
+    if (!playlistId) {
+      return;
+    }
+
+    setPlaylists(await window.zzmusic.addTrackToPlaylist(playlistId, trackId));
+  }
+
+  async function handleRemoveFromSelectedPlaylist(trackId: string) {
+    if (!selectedPlaylistId) {
+      return;
+    }
+
+    setPlaylists(await window.zzmusic.removeTrackFromPlaylist(selectedPlaylistId, trackId));
+  }
+
+  function playTrack(trackId: string, sourceTracks = viewTracks) {
     setPlaybackError(null);
+    setQueueTrackIds(sourceTracks.map((track) => track.id));
     setCurrentTrackId(trackId);
     setIsPlaying(true);
   }
 
   function togglePlay() {
     if (!currentTrack && tracks[0]) {
-      playTrack(tracks[0].id);
+      playTrack(viewTracks[0]?.id ?? tracks[0].id, viewTracks.length > 0 ? viewTracks : tracks);
       return;
     }
 
@@ -139,25 +201,54 @@ function App() {
   }
 
   function playPrevious() {
-    if (tracks.length === 0) {
+    if (playbackTracks.length === 0) {
       return;
     }
 
-    const previousIndex = currentIndex > 0 ? currentIndex - 1 : tracks.length - 1;
-    playTrack(tracks[previousIndex].id);
+    if (playbackMode === "shuffle") {
+      playRandom();
+      return;
+    }
+
+    const previousIndex = currentIndex > 0 ? currentIndex - 1 : playbackTracks.length - 1;
+    playTrack(playbackTracks[previousIndex].id, playbackTracks);
   }
 
   function playNext() {
-    if (tracks.length === 0) {
+    if (playbackTracks.length === 0) {
       return;
     }
 
-    const nextIndex = currentIndex >= 0 && currentIndex < tracks.length - 1 ? currentIndex + 1 : 0;
-    playTrack(tracks[nextIndex].id);
+    if (playbackMode === "shuffle") {
+      playRandom();
+      return;
+    }
+
+    const nextIndex = currentIndex >= 0 && currentIndex < playbackTracks.length - 1 ? currentIndex + 1 : 0;
+    playTrack(playbackTracks[nextIndex].id, playbackTracks);
+  }
+
+  function playRandom() {
+    if (playbackTracks.length === 0) {
+      return;
+    }
+
+    const candidates =
+      playbackTracks.length > 1
+        ? playbackTracks.filter((track) => track.id !== currentTrackId)
+        : playbackTracks;
+    const randomTrack = candidates[Math.floor(Math.random() * candidates.length)];
+    playTrack(randomTrack.id, playbackTracks);
   }
 
   function handleEnded() {
-    if (tracks.length > 1) {
+    if (repeatOne && audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(handlePlaybackError);
+      return;
+    }
+
+    if (playbackTracks.length > 1) {
       playNext();
       return;
     }
@@ -258,16 +349,68 @@ function App() {
         <section className="library-panel">
           <div className="section-heading">
             <h2>{sectionTitle}</h2>
-            <span>{tracks.length} 首</span>
+            <span>{viewTracks.length} 首</span>
           </div>
 
           {activeView === "playlist" && (
-            <div className="playlist-summary">
-              <div className="playlist-cover">Z</div>
-              <div>
-                <strong>默认歌单</strong>
-                <span>当前导入的本地音乐会自动加入这里。</span>
-              </div>
+            <div className="playlist-area">
+              <form
+                className="playlist-create"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  handleCreatePlaylist();
+                }}
+              >
+                <input
+                  value={newPlaylistName}
+                  placeholder="新建歌单名称"
+                  onChange={(event) => setNewPlaylistName(event.target.value)}
+                />
+                <button type="submit">
+                  <Plus size={16} />
+                  <span>创建</span>
+                </button>
+              </form>
+
+              {playlists.length > 0 ? (
+                <div className="playlist-tabs" aria-label="歌单列表">
+                  {playlists.map((playlist) => (
+                    <button
+                      className={playlist.id === selectedPlaylistId ? "active" : ""}
+                      type="button"
+                      key={playlist.id}
+                      onClick={() => setSelectedPlaylistId(playlist.id)}
+                    >
+                      {playlist.name}
+                      <span>{playlist.trackIds.length}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="playlist-summary">
+                  <div className="playlist-cover">Z</div>
+                  <div>
+                    <strong>还没有歌单</strong>
+                    <span>创建歌单后，可以从资料库把歌曲添加进来。</span>
+                  </div>
+                </div>
+              )}
+
+              {selectedPlaylist && (
+                <div className="playlist-summary">
+                  <div className="playlist-cover">Z</div>
+                  <div>
+                    <strong>{selectedPlaylist.name}</strong>
+                    <span>从资料库选择歌曲右侧的歌单，即可添加到这里。</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeView === "library" && playlists.length === 0 && (
+            <div className="playlist-hint">
+              <span>想给歌曲分组？先到“歌单”里创建一个自定义歌单。</span>
             </div>
           )}
 
@@ -275,7 +418,9 @@ function App() {
             <div className="track-list">
               {filteredTracks.map((track, index) => (
                 <div
-                  className={`track-row ${track.id === currentTrackId ? "active" : ""}`}
+                  className={`track-row ${activeView === "library" ? "with-playlist" : ""} ${
+                    track.id === currentTrackId ? "active" : ""
+                  }`}
                   key={track.id}
                 >
                   <span className="track-index">{index + 1}</span>
@@ -283,7 +428,7 @@ function App() {
                     className="track-title"
                     type="button"
                     title={track.filePath}
-                    onClick={() => playTrack(track.id)}
+                    onClick={() => playTrack(track.id, filteredTracks)}
                   >
                     <strong>{track.title}</strong>
                     <small>{track.artist}</small>
@@ -291,11 +436,35 @@ function App() {
                   <span className="track-time">
                     {track.id === currentTrackId ? formatTime(duration) : "--:--"}
                   </span>
+                  {activeView === "library" && (
+                    <select
+                      className="playlist-select"
+                      value=""
+                      aria-label={`添加 ${track.title} 到歌单`}
+                      disabled={playlists.length === 0}
+                      onChange={(event) => handleAddTrackToPlaylist(track.id, event.target.value)}
+                    >
+                      <option value="">添加到歌单</option>
+                      {playlists.map((playlist) => (
+                        <option value={playlist.id} key={playlist.id}>
+                          {playlist.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <button
                     className="track-remove"
                     type="button"
-                    aria-label={`从播放列表移除 ${track.title}`}
-                    onClick={() => handleRemoveTrack(track.id)}
+                    aria-label={
+                      activeView === "playlist"
+                        ? `从当前歌单移除 ${track.title}`
+                        : `从资料库移除 ${track.title}`
+                    }
+                    onClick={() =>
+                      activeView === "playlist"
+                        ? handleRemoveFromSelectedPlaylist(track.id)
+                        : handleRemoveTrack(track.id)
+                    }
                   >
                     <Trash2 size={16} />
                   </button>
@@ -304,11 +473,19 @@ function App() {
             </div>
           ) : (
             <div className="empty-state">
-              <strong>{tracks.length === 0 ? "还没有本地音乐" : "没有匹配的歌曲"}</strong>
+              <strong>
+                {tracks.length === 0
+                  ? "还没有本地音乐"
+                  : activeView === "playlist" && playlists.length === 0
+                    ? "还没有歌单"
+                    : "没有匹配的歌曲"}
+              </strong>
               <span>
                 {tracks.length === 0
                   ? "导入 mp3、wav、flac 或 m4a 文件后会显示在这里。"
-                  : "换个关键词试试。"}
+                  : activeView === "playlist" && playlists.length === 0
+                    ? "先创建一个歌单，再从资料库添加歌曲。"
+                    : "换个关键词试试。"}
               </span>
               {tracks.length === 0 && (
                 <button type="button" onClick={handleImportTracks}>
@@ -345,6 +522,15 @@ function App() {
 
         <div className="transport">
           <div className="transport-buttons">
+            <button
+              className={repeatOne ? "mode-active" : ""}
+              type="button"
+              aria-label="单曲循环"
+              onClick={() => setRepeatOne((enabled) => !enabled)}
+              disabled={tracks.length === 0}
+            >
+              <Repeat1 size={17} />
+            </button>
             <button type="button" aria-label="上一首" onClick={playPrevious} disabled={tracks.length === 0}>
               <SkipBack size={18} fill="currentColor" />
             </button>
@@ -359,6 +545,24 @@ function App() {
             </button>
             <button type="button" aria-label="下一首" onClick={playNext} disabled={tracks.length === 0}>
               <SkipForward size={18} fill="currentColor" />
+            </button>
+            <button
+              className={playbackMode === "shuffle" ? "mode-active" : ""}
+              type="button"
+              aria-label="随机播放"
+              onClick={() => setPlaybackMode("shuffle")}
+              disabled={tracks.length === 0}
+            >
+              <Shuffle size={17} />
+            </button>
+            <button
+              className={playbackMode === "loop" ? "mode-active" : ""}
+              type="button"
+              aria-label="列表循环"
+              onClick={() => setPlaybackMode("loop")}
+              disabled={tracks.length === 0}
+            >
+              <Repeat size={17} />
             </button>
           </div>
           <div className="timeline">

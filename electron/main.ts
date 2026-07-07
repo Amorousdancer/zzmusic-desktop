@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from "electron";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,8 +19,19 @@ type TrackView = Track & {
   audioUrl: string;
 };
 
+type Playlist = {
+  id: string;
+  name: string;
+  trackIds: string[];
+  createdAt: string;
+};
+
 function libraryPath(): string {
   return join(app.getPath("userData"), "library.json");
+}
+
+function playlistsPath(): string {
+  return join(app.getPath("userData"), "playlists.json");
 }
 
 function createTrack(filePath: string): Track {
@@ -61,6 +72,24 @@ async function writeLibrary(tracks: Track[]): Promise<void> {
   await writeFile(path, JSON.stringify(tracks, null, 2), "utf-8");
 }
 
+async function readPlaylists(): Promise<Playlist[]> {
+  try {
+    const content = await readFile(playlistsPath(), "utf-8");
+    const data = JSON.parse(content) as Playlist[];
+    return Array.isArray(data)
+      ? data.filter((playlist) => playlist.id && playlist.name && Array.isArray(playlist.trackIds))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writePlaylists(playlists: Playlist[]): Promise<void> {
+  const path = playlistsPath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(playlists, null, 2), "utf-8");
+}
+
 function registerIpc(): void {
   ipcMain.handle("library:get", async () => (await readLibrary()).map(toTrackView));
 
@@ -93,8 +122,55 @@ function registerIpc(): void {
   ipcMain.handle("library:remove", async (_event, trackId: string) => {
     const library = await readLibrary();
     const nextLibrary = library.filter((track) => track.id !== trackId);
+    const playlists = await readPlaylists();
+    const nextPlaylists = playlists.map((playlist) => ({
+      ...playlist,
+      trackIds: playlist.trackIds.filter((id) => id !== trackId)
+    }));
     await writeLibrary(nextLibrary);
+    await writePlaylists(nextPlaylists);
     return nextLibrary.map(toTrackView);
+  });
+
+  ipcMain.handle("playlists:get", () => readPlaylists());
+
+  ipcMain.handle("playlists:create", async (_event, name: string) => {
+    const playlistName = name.trim();
+    if (!playlistName) {
+      return readPlaylists();
+    }
+
+    const playlists = await readPlaylists();
+    const nextPlaylists = [
+      ...playlists,
+      { id: randomUUID(), name: playlistName, trackIds: [], createdAt: new Date().toISOString() }
+    ];
+    await writePlaylists(nextPlaylists);
+    return nextPlaylists;
+  });
+
+  ipcMain.handle("playlists:add-track", async (_event, playlistId: string, trackId: string) => {
+    const playlists = await readPlaylists();
+    const nextPlaylists = playlists.map((playlist) => {
+      if (playlist.id !== playlistId || playlist.trackIds.includes(trackId)) {
+        return playlist;
+      }
+
+      return { ...playlist, trackIds: [...playlist.trackIds, trackId] };
+    });
+    await writePlaylists(nextPlaylists);
+    return nextPlaylists;
+  });
+
+  ipcMain.handle("playlists:remove-track", async (_event, playlistId: string, trackId: string) => {
+    const playlists = await readPlaylists();
+    const nextPlaylists = playlists.map((playlist) =>
+      playlist.id === playlistId
+        ? { ...playlist, trackIds: playlist.trackIds.filter((id) => id !== trackId) }
+        : playlist
+    );
+    await writePlaylists(nextPlaylists);
+    return nextPlaylists;
   });
 }
 

@@ -247,6 +247,71 @@ button:disabled {
   background: #f5f7fb;
 }
 
+.playlist-area {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.playlist-create {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 10px;
+}
+
+.playlist-create input,
+.playlist-select {
+  height: 34px;
+  border: 1px solid #e2e2e7;
+  border-radius: 8px;
+  color: #1d1d1f;
+  background: #fff;
+}
+
+.playlist-create input {
+  min-width: 0;
+  padding: 0 12px;
+  outline: 0;
+}
+
+.playlist-create button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 8px;
+  color: #fff;
+  background: #1d1d1f;
+}
+
+.playlist-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.playlist-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: #3a3a3c;
+  background: #f5f5f7;
+}
+
+.playlist-tabs button.active {
+  color: #0066cc;
+  background: #eef5ff;
+}
+
+.playlist-tabs span {
+  color: #8a8a93;
+  font-size: 12px;
+}
+
 .playlist-cover {
   display: grid;
   place-items: center;
@@ -273,6 +338,15 @@ button:disabled {
   font-size: 13px;
 }
 
+.playlist-hint {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #6e6e73;
+  background: #f5f7fb;
+  font-size: 13px;
+}
+
 .track-list {
   display: grid;
   gap: 4px;
@@ -288,6 +362,10 @@ button:disabled {
   text-align: left;
   color: #1d1d1f;
   background: transparent;
+}
+
+.track-row.with-playlist {
+  grid-template-columns: 36px minmax(0, 1fr) 56px minmax(130px, 160px) 36px;
 }
 
 .track-row:hover {
@@ -337,6 +415,13 @@ button:disabled {
 .track-remove:hover {
   color: #d70015;
   background: #f5e6e8;
+}
+
+.playlist-select {
+  width: 100%;
+  padding: 0 8px;
+  color: #6e6e73;
+  font-size: 12px;
 }
 
 .empty-state {
@@ -469,6 +554,11 @@ button:disabled {
 .transport-buttons .play-button:disabled {
   color: #8a8a93;
   background: #ececf1;
+}
+
+.transport-buttons .mode-active {
+  color: #0066cc;
+  background: #eef5ff;
 }
 
 .timeline,
