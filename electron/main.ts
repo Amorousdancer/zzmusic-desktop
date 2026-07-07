@@ -26,12 +26,23 @@ type Playlist = {
   createdAt: string;
 };
 
+type Lyric = {
+  trackId: string;
+  fileName: string;
+  content: string;
+  importedAt: string;
+};
+
 function libraryPath(): string {
   return join(app.getPath("userData"), "library.json");
 }
 
 function playlistsPath(): string {
   return join(app.getPath("userData"), "playlists.json");
+}
+
+function lyricsPath(): string {
+  return join(app.getPath("userData"), "lyrics.json");
 }
 
 function createTrack(filePath: string): Track {
@@ -88,6 +99,22 @@ async function writePlaylists(playlists: Playlist[]): Promise<void> {
   const path = playlistsPath();
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(playlists, null, 2), "utf-8");
+}
+
+async function readLyrics(): Promise<Record<string, Lyric>> {
+  try {
+    const content = await readFile(lyricsPath(), "utf-8");
+    const data = JSON.parse(content) as Record<string, Lyric>;
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeLyrics(lyrics: Record<string, Lyric>): Promise<void> {
+  const path = lyricsPath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(lyrics, null, 2), "utf-8");
 }
 
 function registerIpc(): void {
@@ -196,6 +223,40 @@ function registerIpc(): void {
     );
     await writePlaylists(nextPlaylists);
     return nextPlaylists;
+  });
+
+  ipcMain.handle("lyrics:get", async (_event, trackId: string) => {
+    const lyrics = await readLyrics();
+    return lyrics[trackId] ?? null;
+  });
+
+  ipcMain.handle("lyrics:import", async (_event, trackId: string) => {
+    const dialogOptions: OpenDialogOptions = {
+      title: "导入歌词",
+      properties: ["openFile"],
+      filters: [{ name: "歌词文件", extensions: ["lrc", "txt"] }]
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+
+    if (result.canceled || result.filePaths.length === 0) {
+      const lyrics = await readLyrics();
+      return lyrics[trackId] ?? null;
+    }
+
+    const filePath = result.filePaths[0];
+    const content = await readFile(filePath, "utf-8");
+    const lyrics = await readLyrics();
+    const lyric: Lyric = {
+      trackId,
+      fileName: basename(filePath),
+      content,
+      importedAt: new Date().toISOString()
+    };
+    lyrics[trackId] = lyric;
+    await writeLyrics(lyrics);
+    return lyric;
   });
 }
 

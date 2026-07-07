@@ -13,5 +13,7 @@ contextBridge.exposeInMainWorld("zzmusic", {
   addTrackToPlaylist: (playlistId: string, trackId: string) =>
     ipcRenderer.invoke("playlists:add-track", playlistId, trackId),
   removeTrackFromPlaylist: (playlistId: string, trackId: string) =>
-    ipcRenderer.invoke("playlists:remove-track", playlistId, trackId)
+    ipcRenderer.invoke("playlists:remove-track", playlistId, trackId),
+  getLyrics: (trackId: string) => ipcRenderer.invoke("lyrics:get", trackId),
+  importLyrics: (trackId: string) => ipcRenderer.invoke("lyrics:import", trackId)
 });

@@ -16,6 +16,13 @@ type Playlist = {
   createdAt: string;
 };
 
+type Lyric = {
+  trackId: string;
+  fileName: string;
+  content: string;
+  importedAt: string;
+};
+
 interface Window {
   zzmusic: {
     appName: string;
@@ -28,5 +35,7 @@ interface Window {
     deletePlaylist: (playlistId: string) => Promise<Playlist[]>;
     addTrackToPlaylist: (playlistId: string, trackId: string) => Promise<Playlist[]>;
     removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<Playlist[]>;
+    getLyrics: (trackId: string) => Promise<Lyric | null>;
+    importLyrics: (trackId: string) => Promise<Lyric | null>;
   };
 }

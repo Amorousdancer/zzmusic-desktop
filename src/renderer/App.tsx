@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
+  FileText,
   Library,
   ListMusic,
   Pause,
@@ -20,8 +21,13 @@ import {
   X
 } from "lucide-react";
 
-type ActiveView = "library" | "playlist";
+type ActiveView = "library" | "playlist" | "lyrics";
 type PlaybackMode = "loop" | "shuffle";
+
+type LyricLine = {
+  time: number | null;
+  text: string;
+};
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) {
@@ -33,6 +39,32 @@ function formatTime(seconds: number): string {
     .toString()
     .padStart(2, "0");
   return `${minutes}:${rest}`;
+}
+
+function parseLyricLines(content: string): LyricLine[] {
+  const lines: LyricLine[] = [];
+
+  for (const line of content.split(/\r?\n/)) {
+    const timestamps = [...line.matchAll(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g)];
+    const text = line.replace(/\[[^\]]+\]/g, "").trim();
+    if (!text) {
+      continue;
+    }
+
+    if (timestamps.length === 0) {
+      lines.push({ time: null, text });
+      continue;
+    }
+
+    for (const match of timestamps) {
+      const minutes = Number(match[1]);
+      const seconds = Number(match[2]);
+      const fraction = Number((match[3] ?? "0").padEnd(3, "0"));
+      lines.push({ time: minutes * 60 + seconds + fraction / 1000, text });
+    }
+  }
+
+  return lines.sort((a, b) => (a.time ?? Number.MAX_SAFE_INTEGER) - (b.time ?? Number.MAX_SAFE_INTEGER));
 }
 
 function App() {
@@ -52,6 +84,9 @@ function App() {
   const [volume, setVolume] = useState(70);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [playlistMessage, setPlaylistMessage] = useState<string | null>(null);
+  const [currentLyric, setCurrentLyric] = useState<Lyric | null>(null);
+  const [lyricMessage, setLyricMessage] = useState<string | null>(null);
+  const [isImportingLyric, setIsImportingLyric] = useState(false);
   const [activeView, setActiveView] = useState<ActiveView>("library");
   const [queueTrackIds, setQueueTrackIds] = useState<string[]>([]);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>("loop");
@@ -82,9 +117,21 @@ function App() {
     : -1;
   const progressPercent =
     duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
-  const pageTitle = activeView === "library" ? "ZZmusic" : selectedPlaylist?.name ?? "歌单";
-  const pageEyebrow = activeView === "library" ? "Windows 本地音乐播放器" : "本地音乐歌单";
-  const sectionTitle = activeView === "library" ? "歌曲" : selectedPlaylist?.name ?? "歌单";
+  const lyricLines = useMemo(() => parseLyricLines(currentLyric?.content ?? ""), [currentLyric]);
+  const activeLyricIndex = lyricLines.reduce(
+    (activeIndex, line, index) => (line.time !== null && line.time <= currentTime ? index : activeIndex),
+    -1
+  );
+  const pageTitle =
+    activeView === "library" ? "ZZmusic" : activeView === "lyrics" ? "歌词" : selectedPlaylist?.name ?? "歌单";
+  const pageEyebrow =
+    activeView === "library"
+      ? "Windows 本地音乐播放器"
+      : activeView === "lyrics"
+        ? currentTrack?.title ?? "当前播放"
+        : "本地音乐歌单";
+  const sectionTitle =
+    activeView === "library" ? "歌曲" : activeView === "lyrics" ? "歌词" : selectedPlaylist?.name ?? "歌单";
 
   useEffect(() => {
     Promise.all([window.zzmusic.getLibrary(), window.zzmusic.getPlaylists()])
@@ -105,6 +152,15 @@ function App() {
   useEffect(() => {
     setRenamePlaylistName(selectedPlaylist?.name ?? "");
   }, [selectedPlaylist?.id, selectedPlaylist?.name]);
+
+  useEffect(() => {
+    if (!currentTrackId) {
+      setCurrentLyric(null);
+      return;
+    }
+
+    window.zzmusic.getLyrics(currentTrackId).then(setCurrentLyric).catch(() => setCurrentLyric(null));
+  }, [currentTrackId]);
 
   useEffect(() => {
     if (currentTrackId && !tracks.some((track) => track.id === currentTrackId)) {
@@ -276,6 +332,37 @@ function App() {
     setPlaylists(await window.zzmusic.removeTrackFromPlaylist(selectedPlaylistId, trackId));
   }
 
+  async function handleImportLyrics() {
+    if (!currentTrack) {
+      setLyricMessage("请先播放或选择一首歌曲。");
+      return;
+    }
+
+    setIsImportingLyric(true);
+    setLyricMessage(null);
+    try {
+      const lyric = await window.zzmusic.importLyrics(currentTrack.id);
+      setCurrentLyric(lyric);
+      setLyricMessage(lyric ? `已导入歌词：${lyric.fileName}` : "未选择歌词文件。");
+      if (lyric) {
+        setActiveView("lyrics");
+      }
+    } catch {
+      setLyricMessage("歌词导入失败，请确认文件编码或格式。");
+    } finally {
+      setIsImportingLyric(false);
+    }
+  }
+
+  function openLyricsView() {
+    if (!currentTrack) {
+      setLyricMessage("请先播放或选择一首歌曲。");
+      return;
+    }
+
+    setActiveView("lyrics");
+  }
+
   function playTrack(trackId: string, sourceTracks = viewTracks) {
     setPlaybackError(null);
     setQueueTrackIds(sourceTracks.map((track) => track.id));
@@ -432,13 +519,64 @@ function App() {
             <p>{pageEyebrow}</p>
             <h1>{pageTitle}</h1>
           </div>
-          <button className="primary-action" type="button" onClick={handleImportTracks}>
-            <Play size={18} fill="currentColor" />
-            <span>{tracks.length > 0 ? "继续导入" : "开始体验"}</span>
+          <button
+            className="primary-action"
+            type="button"
+            onClick={activeView === "lyrics" ? handleImportLyrics : handleImportTracks}
+            disabled={activeView === "lyrics" ? !currentTrack || isImportingLyric : isImporting}
+          >
+            {activeView === "lyrics" ? <FileText size={18} /> : <Play size={18} fill="currentColor" />}
+            <span>
+              {activeView === "lyrics"
+                ? isImportingLyric
+                  ? "导入中"
+                  : "导入歌词"
+                : tracks.length > 0
+                  ? "继续导入"
+                  : "开始体验"}
+            </span>
           </button>
         </section>
 
-        <section className="library-panel">
+        <section className={activeView === "lyrics" ? "lyrics-panel" : "library-panel"}>
+          {activeView === "lyrics" ? (
+            <>
+              <div className="section-heading">
+                <h2>{currentTrack?.title ?? "歌词"}</h2>
+                <span>{currentLyric?.fileName ?? "未导入歌词"}</span>
+              </div>
+              {lyricMessage && <div className="playlist-message">{lyricMessage}</div>}
+
+              {currentLyric && lyricLines.length > 0 ? (
+                <div className="lyrics-scroll" aria-label="歌词滚动页面">
+                  {lyricLines.map((line, index) => (
+                    <p
+                      className={index === activeLyricIndex ? "active" : ""}
+                      key={`${line.time ?? "plain"}-${index}`}
+                    >
+                      {line.text}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <strong>{currentTrack ? "还没有歌词" : "还没有正在播放的歌曲"}</strong>
+                  <span>
+                    {currentTrack
+                      ? "导入 .lrc 或 .txt 歌词后，会在这里以滚动页面显示。"
+                      : "先播放一首歌曲，再进入歌词页面。"}
+                  </span>
+                  {currentTrack && (
+                    <button type="button" onClick={handleImportLyrics} disabled={isImportingLyric}>
+                      <FileText size={16} />
+                      <span>{isImportingLyric ? "导入中" : "导入歌词"}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
           <div className="section-heading">
             <h2>{sectionTitle}</h2>
             <span>{viewTracks.length} 首</span>
@@ -621,6 +759,8 @@ function App() {
               )}
             </div>
           )}
+            </>
+          )}
         </section>
       </section>
 
@@ -635,7 +775,13 @@ function App() {
       )}
 
       <footer className={`player-bar ${isPlaying ? "is-playing" : ""}`}>
-        <div className="now-playing">
+        <button
+          className="now-playing"
+          type="button"
+          onClick={openLyricsView}
+          disabled={!currentTrack}
+          title={currentTrack ? "打开歌词页面" : "先播放一首歌曲"}
+        >
           <div className="cover-art">Z</div>
           <div>
             <strong>{currentTrack?.title ?? "未播放"}</strong>
@@ -644,7 +790,7 @@ function App() {
                 (tracks.length > 0 ? `${tracks.length} 首歌曲已就绪` : "导入音乐后开始播放")}
             </span>
           </div>
-        </div>
+        </button>
 
         <div className="transport">
           <div className="transport-buttons">
