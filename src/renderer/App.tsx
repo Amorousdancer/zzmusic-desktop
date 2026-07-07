@@ -16,6 +16,8 @@ import {
   X
 } from "lucide-react";
 
+type ActiveView = "library" | "playlist";
+
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return "0:00";
@@ -39,6 +41,7 @@ function App() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(70);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<ActiveView>("library");
 
   const filteredTracks = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -54,6 +57,9 @@ function App() {
   const currentIndex = currentTrack
     ? tracks.findIndex((track) => track.id === currentTrack.id)
     : -1;
+  const pageTitle = activeView === "library" ? "ZZmusic" : "默认歌单";
+  const pageEyebrow = activeView === "library" ? "Windows 本地音乐播放器" : "本地音乐歌单";
+  const sectionTitle = activeView === "library" ? "歌曲" : "默认歌单";
 
   useEffect(() => {
     window.zzmusic.getLibrary().then(setTracks).catch(console.error);
@@ -188,13 +194,21 @@ function App() {
         </div>
 
         <nav className="nav-list" aria-label="主导航">
-          <button className="nav-item active" type="button">
+          <button
+            className={`nav-item ${activeView === "library" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("library")}
+          >
             <Library size={18} />
             <span>资料库</span>
           </button>
-          <button className="nav-item" type="button">
+          <button
+            className={`nav-item ${activeView === "playlist" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("playlist")}
+          >
             <ListMusic size={18} />
-            <span>歌曲</span>
+            <span>歌单</span>
           </button>
         </nav>
       </aside>
@@ -232,8 +246,8 @@ function App() {
 
         <section className="hero" aria-label="当前资料库">
           <div>
-            <p>Windows 本地音乐播放器</p>
-            <h1>ZZmusic</h1>
+            <p>{pageEyebrow}</p>
+            <h1>{pageTitle}</h1>
           </div>
           <button className="primary-action" type="button" onClick={handleImportTracks}>
             <Play size={18} fill="currentColor" />
@@ -243,9 +257,19 @@ function App() {
 
         <section className="library-panel">
           <div className="section-heading">
-            <h2>歌曲</h2>
+            <h2>{sectionTitle}</h2>
             <span>{tracks.length} 首</span>
           </div>
+
+          {activeView === "playlist" && (
+            <div className="playlist-summary">
+              <div className="playlist-cover">Z</div>
+              <div>
+                <strong>默认歌单</strong>
+                <span>当前导入的本地音乐会自动加入这里。</span>
+              </div>
+            </div>
+          )}
 
           {filteredTracks.length > 0 ? (
             <div className="track-list">
