@@ -1,9 +1,10 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 contextBridge.exposeInMainWorld("zzmusic", {
   appName: "ZZmusic",
   getLibrary: () => ipcRenderer.invoke("library:get"),
   importTracks: () => ipcRenderer.invoke("library:import"),
+  importTrackFolder: () => ipcRenderer.invoke("library:import-folder"),
   removeTrack: (trackId: string) => ipcRenderer.invoke("library:remove", trackId),
   getPlaylists: () => ipcRenderer.invoke("playlists:get"),
   createPlaylist: (name: string) => ipcRenderer.invoke("playlists:create", name),
@@ -15,5 +16,17 @@ contextBridge.exposeInMainWorld("zzmusic", {
   removeTrackFromPlaylist: (playlistId: string, trackId: string) =>
     ipcRenderer.invoke("playlists:remove-track", playlistId, trackId),
   getLyrics: (trackId: string) => ipcRenderer.invoke("lyrics:get", trackId),
-  importLyrics: (trackId: string) => ipcRenderer.invoke("lyrics:import", trackId)
+  importLyrics: (trackId: string) => ipcRenderer.invoke("lyrics:import", trackId),
+  windowControls: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    restore: () => ipcRenderer.invoke("window:restore"),
+    toggleFullscreen: () => ipcRenderer.invoke("window:toggle-fullscreen"),
+    close: () => ipcRenderer.invoke("window:close")
+  },
+  sendPlayerCommand: (command: string) => ipcRenderer.invoke("player:command", command),
+  onPlayerCommand: (handler: (command: string) => void) => {
+    const listener = (_event: IpcRendererEvent, command: string) => handler(command);
+    ipcRenderer.on("player:command", listener);
+    return () => ipcRenderer.removeListener("player:command", listener);
+  }
 });

@@ -28,6 +28,7 @@ interface Window {
     appName: string;
     getLibrary: () => Promise<Track[]>;
     importTracks: () => Promise<Track[]>;
+    importTrackFolder: () => Promise<Track[]>;
     removeTrack: (trackId: string) => Promise<Track[]>;
     getPlaylists: () => Promise<Playlist[]>;
     createPlaylist: (name: string) => Promise<Playlist[]>;
@@ -37,5 +38,15 @@ interface Window {
     removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<Playlist[]>;
     getLyrics: (trackId: string) => Promise<Lyric | null>;
     importLyrics: (trackId: string) => Promise<Lyric | null>;
+    windowControls: {
+      minimize: () => Promise<void>;
+      restore: () => Promise<void>;
+      toggleFullscreen: () => Promise<boolean>;
+      close: () => Promise<void>;
+    };
+    sendPlayerCommand: (command: "previous" | "toggle-play" | "next" | "volume-up" | "volume-down") => Promise<void>;
+    onPlayerCommand: (
+      handler: (command: "previous" | "toggle-play" | "next" | "volume-up" | "volume-down") => void
+    ) => () => void;
   };
 }
