@@ -2,6 +2,12 @@
 
 ZZmusic 是一个面向 Windows x64 的本地桌面音乐播放器，使用 Electron、React、TypeScript 和 Vite 构建。它专注于本地音频管理和播放，不依赖账号、云同步或联网服务。
 
+## 下载安装
+
+Windows x64 用户可以下载第一版安装包：
+
+[ZZmusic-0.1.0-x64.exe](https://github.com/Amorousdancer/zzmusic-desktop/releases/download/v0.1.0/ZZmusic-0.1.0-x64.exe)
+
 ## 功能
 
 - 导入单个或多个本地音频文件
