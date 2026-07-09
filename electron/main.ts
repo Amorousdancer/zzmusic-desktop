@@ -70,6 +70,19 @@ type Lyric = {
   importedAt: string;
 };
 
+type PlaybackMemoryEntry = {
+  time: number;
+  duration: number;
+  updatedAt: string;
+};
+
+type PlaybackMemory = Record<string, PlaybackMemoryEntry>;
+
+type PlayerState = {
+  currentTrackId: string | null;
+  updatedAt: string;
+};
+
 function libraryPath(): string {
   return join(app.getPath("userData"), "library.json");
 }
@@ -80,6 +93,14 @@ function playlistsPath(): string {
 
 function lyricsPath(): string {
   return join(app.getPath("userData"), "lyrics.json");
+}
+
+function playbackMemoryPath(): string {
+  return join(app.getPath("userData"), "playback-memory.json");
+}
+
+function playerStatePath(): string {
+  return join(app.getPath("userData"), "player-state.json");
 }
 
 function createTrack(filePath: string): Track {
@@ -185,6 +206,68 @@ async function writeLyrics(lyrics: Record<string, Lyric>): Promise<void> {
   await writeFile(path, JSON.stringify(lyrics, null, 2), "utf-8");
 }
 
+function normalizePlaybackMemoryEntry(entry: unknown): PlaybackMemoryEntry | null {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const source = entry as Partial<PlaybackMemoryEntry>;
+  const time = Number(source.time);
+  const duration = Number(source.duration);
+  if (!Number.isFinite(time) || !Number.isFinite(duration) || time < 10 || duration - time < 8) {
+    return null;
+  }
+
+  return {
+    time,
+    duration,
+    updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : new Date().toISOString()
+  };
+}
+
+async function readPlaybackMemory(): Promise<PlaybackMemory> {
+  try {
+    const content = await readFile(playbackMemoryPath(), "utf-8");
+    const data = JSON.parse(content) as Record<string, unknown>;
+    if (!data || typeof data !== "object") {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(data)
+        .map(([trackId, entry]) => [trackId, normalizePlaybackMemoryEntry(entry)] as const)
+        .filter((entry): entry is [string, PlaybackMemoryEntry] => Boolean(entry[1]))
+    );
+  } catch {
+    return {};
+  }
+}
+
+async function writePlaybackMemory(memory: PlaybackMemory): Promise<void> {
+  const path = playbackMemoryPath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(memory, null, 2), "utf-8");
+}
+
+async function readPlayerState(): Promise<PlayerState> {
+  try {
+    const content = await readFile(playerStatePath(), "utf-8");
+    const data = JSON.parse(content) as Partial<PlayerState>;
+    return {
+      currentTrackId: typeof data.currentTrackId === "string" ? data.currentTrackId : null,
+      updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString()
+    };
+  } catch {
+    return { currentTrackId: null, updatedAt: new Date().toISOString() };
+  }
+}
+
+async function writePlayerState(state: PlayerState): Promise<void> {
+  const path = playerStatePath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(state, null, 2), "utf-8");
+}
+
 function registerIpc(): void {
   ipcMain.handle("library:get", async () => (await readLibrary()).map(toTrackView));
 
@@ -225,12 +308,21 @@ function registerIpc(): void {
     const library = await readLibrary();
     const nextLibrary = library.filter((track) => track.id !== trackId);
     const playlists = await readPlaylists();
+    const playbackMemory = await readPlaybackMemory();
+    const playerState = await readPlayerState();
     const nextPlaylists = playlists.map((playlist) => ({
       ...playlist,
       trackIds: playlist.trackIds.filter((id) => id !== trackId)
     }));
+    delete playbackMemory[trackId];
+    if (playerState.currentTrackId === trackId) {
+      playerState.currentTrackId = null;
+      playerState.updatedAt = new Date().toISOString();
+    }
     await writeLibrary(nextLibrary);
     await writePlaylists(nextPlaylists);
+    await writePlaybackMemory(playbackMemory);
+    await writePlayerState(playerState);
     return nextLibrary.map(toTrackView);
   });
 
@@ -332,6 +424,29 @@ function registerIpc(): void {
     lyrics[trackId] = lyric;
     await writeLyrics(lyrics);
     return lyric;
+  });
+
+  ipcMain.handle("playback-memory:get", readPlaybackMemory);
+
+  ipcMain.handle("playback-memory:save", async (_event, memory: PlaybackMemory) => {
+    const normalized = Object.fromEntries(
+      Object.entries(memory ?? {})
+        .map(([trackId, entry]) => [trackId, normalizePlaybackMemoryEntry(entry)] as const)
+        .filter((entry): entry is [string, PlaybackMemoryEntry] => Boolean(entry[1]))
+    );
+    await writePlaybackMemory(normalized);
+    return normalized;
+  });
+
+  ipcMain.handle("player-state:get", readPlayerState);
+
+  ipcMain.handle("player-state:save", async (_event, state: Partial<PlayerState>) => {
+    const nextState: PlayerState = {
+      currentTrackId: typeof state?.currentTrackId === "string" ? state.currentTrackId : null,
+      updatedAt: new Date().toISOString()
+    };
+    await writePlayerState(nextState);
+    return nextState;
   });
 }
 

@@ -5,6 +5,7 @@ import {
   Disc3,
   FileText,
   FolderSearch,
+  Focus,
   Library,
   ListMusic,
   Maximize2,
@@ -30,7 +31,7 @@ import playlistVideoUrl from "../../视频素材/hf_20260314_131748_f2ca2a28-fed
 import lyricsVideoUrl from "../../视频素材/hf_20260307_083826_e938b29f-a43a-41ec-a153-3d4730578ab8.mp4";
 import appIconUrl from "../../图标素材/app.png";
 
-type ActiveView = "library" | "playlist" | "lyrics" | "equalizer";
+type ActiveView = "library" | "playlist" | "lyrics" | "equalizer" | "immersive";
 type PlaybackMode = "loop" | "shuffle";
 type EqualizerPresetName = "flat" | "bass" | "vocal" | "pop" | "rock" | "classical" | "custom";
 type EqualizerNamedPreset = Exclude<EqualizerPresetName, "custom">;
@@ -46,6 +47,14 @@ type LyricLine = {
   text: string;
 };
 
+type PlaybackMemoryEntry = {
+  time: number;
+  duration: number;
+  updatedAt: string;
+};
+
+type PlaybackMemory = Record<string, PlaybackMemoryEntry>;
+
 const coverPalettes = [
   ["#8edfd1", "#7fb6e8", "#edf7f5"],
   ["#a7d8cf", "#8fb9dc", "#f3f8fb"],
@@ -58,6 +67,7 @@ const sectionVideos: Record<ActiveView, string> = {
   library: libraryVideoUrl,
   playlist: playlistVideoUrl,
   lyrics: lyricsVideoUrl,
+  immersive: lyricsVideoUrl,
   equalizer: lyricsVideoUrl
 };
 
@@ -84,6 +94,7 @@ const equalizerPresets: Record<EqualizerNamedPreset, { label: string; gains: num
 };
 
 const equalizerStorageKey = "zzmusic.equalizer";
+const playbackMemoryStorageKey = "zzmusic.playbackMemory";
 const defaultEqualizerSettings: EqualizerSettings = {
   enabled: false,
   preset: "flat",
@@ -117,6 +128,52 @@ function readEqualizerSettings(): EqualizerSettings {
   } catch {
     return defaultEqualizerSettings;
   }
+}
+
+function normalizePlaybackMemoryEntry(entry: unknown): PlaybackMemoryEntry | null {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const source = entry as Partial<PlaybackMemoryEntry>;
+  const time = Number(source.time);
+  const duration = Number(source.duration);
+  if (!Number.isFinite(time) || !Number.isFinite(duration) || time < 10 || duration - time < 8) {
+    return null;
+  }
+
+  return {
+    time,
+    duration,
+    updatedAt: typeof source.updatedAt === "string" ? source.updatedAt : new Date().toISOString()
+  };
+}
+
+function readPlaybackMemory(): PlaybackMemory {
+  try {
+    const raw = window.localStorage.getItem(playbackMemoryStorageKey);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([trackId, entry]) => [trackId, normalizePlaybackMemoryEntry(entry)] as const)
+        .filter((entry): entry is [string, PlaybackMemoryEntry] => Boolean(entry[1]))
+    );
+  } catch {
+    return {};
+  }
+}
+
+function formatResumeTime(seconds: number): string {
+  return `上次 ${formatTime(seconds)}`;
+}
+
+function findLatestRememberedTrackId(memory: PlaybackMemory, tracks: Track[]): string | null {
+  const trackIds = new Set(tracks.map((track) => track.id));
+  const latest = Object.entries(memory)
+    .filter(([trackId]) => trackIds.has(trackId))
+    .sort(([, first], [, second]) => Date.parse(second.updatedAt) - Date.parse(first.updatedAt))[0];
+
+  return latest?.[0] ?? null;
 }
 
 function formatGain(gain: number): string {
@@ -290,7 +347,12 @@ function App() {
   const fadingOutRef = useRef(false);
   const restartRef = useRef<number | null>(null);
   const pressedKeysRef = useRef(new Set<string>());
+  const immersiveFullscreenRef = useRef(false);
   const queueHoverStartedRef = useRef(false);
+  const playbackMemoryRef = useRef<PlaybackMemory>({});
+  const lastMemoryWriteRef = useRef(0);
+  const hasLoadedPlaybackMemoryRef = useRef(false);
+  const hasLoadedPlayerStateRef = useRef(false);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [query, setQuery] = useState("");
@@ -320,6 +382,7 @@ function App() {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [equalizerSettings, setEqualizerSettings] = useState<EqualizerSettings>(() => readEqualizerSettings());
+  const [playbackMemory, setPlaybackMemory] = useState<PlaybackMemory>(() => readPlaybackMemory());
 
   const isImporting = importMode !== null;
   const selectedPlaylist = playlists.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
@@ -353,6 +416,15 @@ function App() {
     (activeIndex, line, index) => (line.time !== null && line.time <= currentTime ? index : activeIndex),
     -1
   );
+  const immersiveLyric =
+    lyricLines[activeLyricIndex]?.text ??
+    lyricLines.find((line) => line.text)?.text ??
+    currentTrack?.title ??
+    "选择一首歌开始";
+  const immersiveNextLyric =
+    lyricLines.find((line, index) => index > activeLyricIndex && line.text)?.text ??
+    currentTrack?.artist ??
+    "Local Music";
   const pageTitle =
     activeView === "library"
       ? "乐库"
@@ -365,16 +437,68 @@ function App() {
   const appVisualStyle = visualStyle(`${currentTrack?.title ?? "ZZmusic"}${currentTrack?.artist ?? ""}`);
   const sectionVideo = sectionVideos[activeView];
   const showLibraryTools = activeView === "library" || activeView === "playlist";
+  const isNowPlayingView = activeView === "lyrics" || activeView === "immersive";
 
   useEffect(() => {
-    Promise.all([window.zzmusic.getLibrary(), window.zzmusic.getPlaylists()])
-      .then(([libraryTracks, savedPlaylists]) => {
+    Promise.all([
+      window.zzmusic.getLibrary(),
+      window.zzmusic.getPlaylists(),
+      window.zzmusic.getPlaybackMemory(),
+      window.zzmusic.getPlayerState()
+    ])
+      .then(([libraryTracks, savedPlaylists, savedPlaybackMemory, savedPlayerState]) => {
+        const mergedPlaybackMemory = { ...readPlaybackMemory(), ...savedPlaybackMemory };
+        const savedTrackId = savedPlayerState.currentTrackId;
+        const rememberedTrackId = findLatestRememberedTrackId(mergedPlaybackMemory, libraryTracks);
+        const restoredTrackId =
+          savedTrackId && libraryTracks.some((track) => track.id === savedTrackId)
+            ? savedTrackId
+            : rememberedTrackId;
+
+        hasLoadedPlaybackMemoryRef.current = true;
+        hasLoadedPlayerStateRef.current = true;
         setTracks(libraryTracks);
         setPlaylists(savedPlaylists);
+        setPlaybackMemory(mergedPlaybackMemory);
+        if (restoredTrackId) {
+          setCurrentTrackId(restoredTrackId);
+        }
         setSelectedPlaylistId(savedPlaylists[0]?.id ?? null);
       })
-      .catch(console.error);
+      .catch((error) => {
+        hasLoadedPlaybackMemoryRef.current = true;
+        hasLoadedPlayerStateRef.current = true;
+        console.error(error);
+      });
   }, []);
+
+  useEffect(() => {
+    playbackMemoryRef.current = playbackMemory;
+    if (!hasLoadedPlaybackMemoryRef.current) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(playbackMemoryStorageKey, JSON.stringify(playbackMemory));
+    } catch {
+      // localStorage can fail in restricted profiles; playback should keep working.
+    }
+
+    window.zzmusic.savePlaybackMemory(playbackMemory).catch(() => undefined);
+  }, [playbackMemory]);
+
+  useEffect(() => {
+    if (!hasLoadedPlayerStateRef.current) {
+      return;
+    }
+
+    window.zzmusic
+      .savePlayerState({
+        currentTrackId,
+        updatedAt: new Date().toISOString()
+      })
+      .catch(() => undefined);
+  }, [currentTrackId]);
 
   useEffect(() => {
     const video = backgroundVideoRef.current;
@@ -418,6 +542,9 @@ function App() {
     video.addEventListener("canplay", handleCanPlay);
     video.addEventListener("timeupdate", handleTimeUpdate);
     video.addEventListener("ended", handleEnded);
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      handleCanPlay();
+    }
 
     return () => {
       video.removeEventListener("canplay", handleCanPlay);
@@ -427,7 +554,7 @@ function App() {
         window.clearTimeout(restartRef.current);
       }
     };
-  }, [activeView]);
+  }, [sectionVideo]);
 
   useEffect(() => {
     if (selectedPlaylistId && !playlists.some((playlist) => playlist.id === selectedPlaylistId)) {
@@ -459,6 +586,14 @@ function App() {
 
   useEffect(() => {
     setSelectedTrackIds((ids) => ids.filter((trackId) => tracks.some((track) => track.id === trackId)));
+    setPlaybackMemory((memory) => {
+      if (tracks.length === 0) {
+        return memory;
+      }
+
+      const trackIds = new Set(tracks.map((track) => track.id));
+      return Object.fromEntries(Object.entries(memory).filter(([trackId]) => trackIds.has(trackId)));
+    });
   }, [tracks]);
 
   useEffect(() => {
@@ -868,10 +1003,69 @@ function App() {
     return analyserRef.current;
   }
 
+  function updatePlaybackMemory(trackId: string, time: number, trackDuration: number) {
+    if (!Number.isFinite(time) || !Number.isFinite(trackDuration)) {
+      return;
+    }
+
+    setPlaybackMemory((memory) => {
+      const next = { ...memory };
+      if (time < 10 || trackDuration - time < 8) {
+        delete next[trackId];
+      } else {
+        next[trackId] = {
+          time,
+          duration: trackDuration,
+          updatedAt: new Date().toISOString()
+        };
+      }
+
+      return next;
+    });
+  }
+
+  function handleAudioLoadedMetadata(audio: HTMLAudioElement) {
+    const trackDuration = audio.duration || 0;
+    setDuration(trackDuration);
+    setPlaybackError(null);
+
+    if (!currentTrackId) {
+      return;
+    }
+
+    const memory = normalizePlaybackMemoryEntry(playbackMemoryRef.current[currentTrackId]);
+    if (memory && memory.time < trackDuration - 8) {
+      audio.currentTime = memory.time;
+      setCurrentTime(memory.time);
+    }
+  }
+
+  function handleAudioTimeUpdate(audio: HTMLAudioElement) {
+    setCurrentTime(audio.currentTime);
+    if (!currentTrackId || audio.currentTime - lastMemoryWriteRef.current < 5) {
+      return;
+    }
+
+    lastMemoryWriteRef.current = audio.currentTime;
+    updatePlaybackMemory(currentTrackId, audio.currentTime, audio.duration || duration);
+  }
+
   function playTrack(trackId: string, sourceTracks = viewTracks) {
+    const audio = audioRef.current;
+    if (audio && currentTrackId && currentTrackId !== trackId) {
+      updatePlaybackMemory(currentTrackId, audio.currentTime, audio.duration || duration);
+    }
+
     setPlaybackError(null);
     setQueueTrackIds(sourceTracks.map((track) => track.id));
     setCurrentTrackId(trackId);
+    window.zzmusic
+      .savePlayerState({
+        currentTrackId: trackId,
+        updatedAt: new Date().toISOString()
+      })
+      .catch(() => undefined);
+    lastMemoryWriteRef.current = 0;
     setIsPlaying(true);
     ensureAudioAnalyser().catch(() => undefined);
   }
@@ -947,6 +1141,10 @@ function App() {
   }
 
   function handleEnded() {
+    if (currentTrackId) {
+      updatePlaybackMemory(currentTrackId, 0, duration);
+    }
+
     if (repeatOne && audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(handlePlaybackError);
@@ -960,6 +1158,14 @@ function App() {
 
     setIsPlaying(false);
     setCurrentTime(0);
+  }
+
+  function handleAudioPause() {
+    setIsPlaying(false);
+    const audio = audioRef.current;
+    if (currentTrackId && audio) {
+      updatePlaybackMemory(currentTrackId, audio.currentTime, audio.duration || duration);
+    }
   }
 
   function handlePlaybackError() {
@@ -976,15 +1182,48 @@ function App() {
 
     audio.currentTime = seconds;
     setCurrentTime(seconds);
+    if (currentTrackId) {
+      updatePlaybackMemory(currentTrackId, seconds, audio.duration || duration);
+    }
   }
 
   async function handleToggleFullscreen() {
     setIsFullscreen(await window.zzmusic.windowControls.toggleFullscreen());
   }
 
+  async function openImmersivePlayer() {
+    if (!currentTrack) {
+      openLyricsView();
+      return;
+    }
+
+    setActiveView("immersive");
+    if (!isFullscreen) {
+      immersiveFullscreenRef.current = true;
+      setIsFullscreen(await window.zzmusic.windowControls.toggleFullscreen());
+    }
+  }
+
+  async function closeImmersivePlayer() {
+    setActiveView("lyrics");
+    if (immersiveFullscreenRef.current && isFullscreen) {
+      immersiveFullscreenRef.current = false;
+      setIsFullscreen(await window.zzmusic.windowControls.toggleFullscreen());
+      return;
+    }
+
+    immersiveFullscreenRef.current = false;
+  }
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (isTextInputTarget(event.target)) {
+        return;
+      }
+
+      if (activeView === "immersive" && event.key === "Escape") {
+        event.preventDefault();
+        void closeImmersivePlayer();
         return;
       }
 
@@ -1073,7 +1312,7 @@ function App() {
 
   return (
     <main
-      className={`app-shell section-${activeView} ${activeView === "lyrics" ? "immersive-mode" : ""}`}
+      className={`app-shell section-${activeView} ${isNowPlayingView ? "immersive-mode" : ""}`}
       style={appVisualStyle}
     >
       <video
@@ -1084,7 +1323,6 @@ function App() {
         autoPlay
         playsInline
         preload="auto"
-        style={{ opacity: 0 }}
         aria-hidden="true"
       />
       <div className="scene-scrim" />
@@ -1095,7 +1333,8 @@ function App() {
         </button>
         <button
           type="button"
-          aria-label={isFullscreen ? "退出全屏" : "全屏"}
+          aria-label={isFullscreen ? "退出全屏" : "进入全屏"}
+          title={isFullscreen ? "退出全屏" : "进入全屏"}
           onClick={() => void handleToggleFullscreen()}
         >
           {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
@@ -1183,7 +1422,84 @@ function App() {
           )}
         </header>
 
-        {activeView === "lyrics" ? (
+        {activeView === "immersive" ? (
+          <section className={`immersive-player ${isPlaying ? "is-playing" : ""}`} aria-label="沉浸播放模式">
+            <div className="immersive-halo" />
+            <button
+              className="immersive-exit"
+              type="button"
+              aria-label="退出沉浸模式"
+              onClick={() => void closeImmersivePlayer()}
+            >
+              <Minimize2 size={18} />
+            </button>
+
+            <div className="immersive-stage">
+              <div
+                className="immersive-art"
+                style={visualStyle(`${currentTrack?.title ?? ""}${currentTrack?.artist ?? ""}`)}
+              >
+                <span className="immersive-initial">{initials(currentTrack?.title ?? "Z")}</span>
+                <div className={`audio-response immersive-spectrum ${isPlaying ? "is-active" : ""}`} aria-hidden="true">
+                  {barLevels.map((level, index) => (
+                    <i
+                      key={index}
+                      style={
+                        {
+                          "--bar-index": index,
+                          "--bar-level": level
+                        } as CSSProperties
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="immersive-copy">
+                <p className="eyebrow">{currentTrack?.artist ?? "Local Music"}</p>
+                <h1>{currentTrack?.title ?? "未播放"}</h1>
+                <p className="immersive-lyric">{immersiveLyric}</p>
+                <p className="immersive-next">{immersiveNextLyric}</p>
+              </div>
+            </div>
+
+            <div className="immersive-controls">
+              <div className="immersive-actions">
+                <button type="button" aria-label="上一首" onClick={playPrevious} disabled={tracks.length === 0}>
+                  <SkipBack size={22} fill="currentColor" />
+                </button>
+                <button
+                  className="immersive-play"
+                  type="button"
+                  aria-label={isPlaying ? "暂停" : "播放"}
+                  onClick={togglePlay}
+                  disabled={tracks.length === 0}
+                >
+                  {isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" />}
+                </button>
+                <button type="button" aria-label="下一首" onClick={playNext} disabled={tracks.length === 0}>
+                  <SkipForward size={22} fill="currentColor" />
+                </button>
+              </div>
+
+              <div className="immersive-progress">
+                <span>{formatTime(currentTime)}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max={duration || 0}
+                  step="0.1"
+                  value={Math.min(currentTime, duration || 0)}
+                  style={{ "--range-fill": `${progressPercent}%` } as CSSProperties}
+                  aria-label="播放进度"
+                  disabled={!currentTrack || duration === 0}
+                  onChange={(event) => handleSeek(event.target.value)}
+                />
+                <span>{formatTime(duration)}</span>
+              </div>
+            </div>
+          </section>
+        ) : activeView === "lyrics" ? (
           <section
             className={`now-playing-page view-panel ${isPlaying ? "is-playing" : ""}`}
             aria-label="正在播放沉浸页"
@@ -1470,7 +1786,13 @@ function App() {
                         <strong>{track.title}</strong>
                         <small>{track.artist}</small>
                       </button>
-                      <span>{track.id === currentTrackId ? formatTime(duration) : "本地音频"}</span>
+                      <span>
+                        {track.id === currentTrackId
+                          ? formatTime(duration)
+                          : playbackMemory[track.id]
+                            ? formatResumeTime(playbackMemory[track.id].time)
+                            : "本地音频"}
+                      </span>
                     </div>
                     <div className="card-actions">
                       <button
@@ -1730,6 +2052,18 @@ function App() {
         </div>
 
         <button
+          className={`immersive-trigger ${activeView === "immersive" ? "mode-active" : ""}`}
+          type="button"
+          aria-label="进入沉浸播放"
+          title="沉浸播放"
+          aria-pressed={activeView === "immersive"}
+          onClick={() => void openImmersivePlayer()}
+          disabled={!currentTrack}
+        >
+          <Focus size={18} />
+        </button>
+
+        <button
           className={`equalizer-trigger ${activeView === "equalizer" ? "mode-active" : ""}`}
           type="button"
           aria-label="打开均衡器"
@@ -1754,15 +2088,12 @@ function App() {
       </footer>
       <audio
         ref={audioRef}
-        onLoadedMetadata={(event) => {
-          setDuration(event.currentTarget.duration || 0);
-          setPlaybackError(null);
-        }}
-        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onLoadedMetadata={(event) => handleAudioLoadedMetadata(event.currentTarget)}
+        onTimeUpdate={(event) => handleAudioTimeUpdate(event.currentTarget)}
         onEnded={handleEnded}
         onError={handlePlaybackError}
         onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        onPause={handleAudioPause}
       />
     </main>
   );
