@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld("zzmusic", {
     ipcRenderer.invoke("playlists:remove-track", playlistId, trackId),
   getLyrics: (trackId: string) => ipcRenderer.invoke("lyrics:get", trackId),
   importLyrics: (trackId: string) => ipcRenderer.invoke("lyrics:import", trackId),
+  getPlaybackMemory: () => ipcRenderer.invoke("playback-memory:get"),
+  savePlaybackMemory: (memory: unknown) => ipcRenderer.invoke("playback-memory:save", memory),
+  getPlayerState: () => ipcRenderer.invoke("player-state:get"),
+  savePlayerState: (state: unknown) => ipcRenderer.invoke("player-state:save", state),
   windowControls: {
     minimize: () => ipcRenderer.invoke("window:minimize"),
     restore: () => ipcRenderer.invoke("window:restore"),
